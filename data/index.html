@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DASHBOARD IOT</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1 id="title">DASHBOARD IOT</h1>
+    <div class="conn"><span class="dot" id="dot"></span><span id="conn">Menghubungkan…</span></div>
+  </header>
+
+  <div class="grid">
+    <div class="card t"><div class="label">Suhu</div><div class="value"><span id="temp">--</span><small>°F</small></div></div>
+    <div class="card h"><div class="label">Kelembapan</div><div class="value"><span id="hum">--</span><small>%</small></div></div>
+  </div>
+
+  <div class="card status">
+    <span class="badge" id="status">STATUS: --</span>
+    <div class="meta"><div id="ip">IP: --</div><div id="uptime">Uptime: --</div></div>
+  </div>
+
+  <div class="err" id="err">Sensor DHT22 gagal dibaca. Periksa perkabelan sensor.</div>
+
+  <div class="card chart">
+    <div class="label">Riwayat terakhir</div>
+    <canvas id="chart"></canvas>
+    <div class="legend">
+      <span><i style="background:var(--temp)"></i>Suhu (°F)</span>
+      <span><i style="background:var(--hum)"></i>Kelembapan (%)</span>
+    </div>
+  </div>
+
+  <footer>ESP32 + DHT22 + OLED SSD1306 · diperbarui otomatis tiap 2 detik</footer>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+
+function fmtUptime(s){
+  const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), d = s%60;
+  return (h? h+"j ":"") + (m||h? m+"m ":"") + d + "d";
+}
+
+function cssVar(n){ return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+
+function drawChart(t, h){
+  const c = $("chart"), dpr = window.devicePixelRatio || 1;
+  const w = c.clientWidth, hgt = c.clientHeight;
+  c.width = w*dpr; c.height = hgt*dpr;
+  const g = c.getContext("2d"); g.scale(dpr, dpr);
+  g.clearRect(0,0,w,hgt);
+
+  const padL = 30, padR = 8, padT = 10, padB = 18;
+  const pw = w-padL-padR, ph = hgt-padT-padB;
+  const all = t.concat(h);
+  if (all.length < 2){
+    g.fillStyle = cssVar("--muted"); g.font = "12px system-ui";
+    g.fillText("Menunggu data…", padL, hgt/2); return;
+  }
+  let lo = Math.floor(Math.min(...all)-2), hi = Math.ceil(Math.max(...all)+2);
+  if (hi-lo < 10){ hi = lo+10; }
+
+  g.strokeStyle = cssVar("--line"); g.fillStyle = cssVar("--muted"); g.font = "10px system-ui"; g.lineWidth = 1;
+  for (let i=0;i<=4;i++){
+    const y = padT + ph*i/4, v = hi - (hi-lo)*i/4;
+    g.beginPath(); g.moveTo(padL,y); g.lineTo(w-padR,y); g.stroke();
+    g.fillText(Math.round(v), 4, y+3);
+  }
+
+  const line = (arr, color) => {
+    g.strokeStyle = color; g.lineWidth = 2; g.lineJoin = "round"; g.beginPath();
+    arr.forEach((v,i)=>{
+      const x = padL + pw*(arr.length===1?0:i/(arr.length-1));
+      const y = padT + ph*(1-(v-lo)/(hi-lo));
+      i? g.lineTo(x,y) : g.moveTo(x,y);
+    });
+    g.stroke();
+  };
+  line(t, cssVar("--temp"));
+  line(h, cssVar("--hum"));
+}
+
+let lastData = null;
+
+async function refresh(){
+  try{
+    const r = await fetch("/data", {cache:"no-store"});
+    if(!r.ok) throw new Error(r.status);
+    const d = await r.json();
+    lastData = d;
+
+    $("dot").className = "dot on"; $("conn").textContent = "Terhubung";
+    $("title").textContent = "DASHBOARD IOT #" + d.packet;
+    $("ip").textContent = "IP: " + d.ip + (d.ap ? " (Hotspot)" : " (" + d.rssi + " dBm)");
+    $("uptime").textContent = "Uptime: " + fmtUptime(d.uptime);
+
+    if (d.ok){
+      $("temp").textContent = (d.temp * 9/5 + 32).toFixed(1);
+      $("hum").textContent  = Math.round(d.hum);
+      $("err").style.display = "none";
+      const b = $("status"); b.textContent = "STATUS: " + d.status;
+      b.className = "badge " + (d.status==="COMFORTABLE" ? "good" : d.status.startsWith("DANGER") ? "bad" : "normal");
+    } else {
+      $("err").style.display = "block";
+      $("status").textContent = "STATUS: SENSOR ERROR"; $("status").className = "badge bad";
+    }
+    drawChart(d.history.t, d.history.h);
+  }catch(e){
+    $("dot").className = "dot"; $("conn").textContent = "Terputus";
+  }
+}
+
+window.addEventListener("resize", ()=>{ if(lastData) drawChart(lastData.history.t, lastData.history.h); });
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>
